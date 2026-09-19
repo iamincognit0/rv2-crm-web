@@ -11,7 +11,7 @@ const STATUS_COLOR = {
   Closed: { bg: "#DED8CB", text: "#3A342A", border: "#8A7F68" },
 };
 
-const SERVICE_TYPES = ["Title Transfer", "Adverse Claim Filing", "Mortgage/Loan Consulting", "Other"];
+const SERVICE_TYPES = ["Title Transfer", "Adverse Claim Filing", "Mortgage/Loan Consulting", "Credit Repair", "Other"];
 const SERVICE_STATUSES = ["In progress", "Completed"];
 const SERVICE_STATUS_COLOR = {
   "In progress": { bg: "#EFE6D3", text: "#6B5122", border: "#C9A54B" },
@@ -2716,6 +2716,10 @@ function ReportsView({ styles, data, clientName, brick }) {
   const mtdCollected = mtdServices.filter((s) => s.paymentStatus === "Paid").reduce((sum, s) => sum + (Number(s.fee) || 0), 0);
   const mtdForCollection = mtdServices.filter((s) => s.paymentStatus !== "Paid").reduce((sum, s) => sum + (Number(s.fee) || 0), 0);
 
+  const currentYearKey = todayISO().slice(0, 4);
+  const ytdServices = data.services.filter((s) => s.dueDate && s.dueDate.slice(0, 4) === currentYearKey);
+  const ytdCollected = ytdServices.filter((s) => s.paymentStatus === "Paid").reduce((sum, s) => sum + (Number(s.fee) || 0), 0);
+
   const monthLabel = now.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   const clientTotals = {};
@@ -2744,10 +2748,17 @@ function ReportsView({ styles, data, clientName, brick }) {
       <h2 style={{ ...styles.h2, marginBottom: 4 }}>Reports</h2>
       <div style={{ fontSize: 12, color: "#8A8069", marginBottom: 14 }}>{monthLabel}</div>
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 22 }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
         {statCard("Collected (MTD)", mtdCollected, "#3F5A33")}
         {statCard("For Collection (MTD)", mtdForCollection, "#7A3E1E")}
         {statCard("Total (MTD)", mtdCollected + mtdForCollection, "#25313D")}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        {statCard("Collected (Year-to-Date)", ytdCollected, "#3F5A33")}
+      </div>
+      <div style={{ fontSize: 11, color: "#8A8069", marginBottom: 22, fontStyle: "italic" }}>
+        MTD = this month only. Year-to-Date includes every paid service this year, matching the Collections tab total.
       </div>
 
       <div style={{ fontFamily: "'Courier New', monospace", fontSize: 12, color: "#8A8069", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>
