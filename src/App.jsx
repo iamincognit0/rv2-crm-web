@@ -12,6 +12,7 @@ const STATUS_COLOR = {
 };
 
 const SERVICE_TYPES = ["Title Transfer", "Adverse Claim Filing", "Mortgage/Loan Consulting", "Credit Repair", "Other"];
+const PIPELINE_TYPES = ["Property Sale", ...SERVICE_TYPES];
 const SERVICE_STATUSES = ["In progress", "Completed"];
 const SERVICE_STATUS_COLOR = {
   "In progress": { bg: "#EFE6D3", text: "#6B5122", border: "#C9A54B" },
@@ -125,7 +126,7 @@ function CRM({ userId }) {
   const [showListingForm, setShowListingForm] = useState(false);
   const [editingListingId, setEditingListingId] = useState(null);
   const [listingFormError, setListingFormError] = useState("");
-  const [listingForm, setListingForm] = useState({ clientId: "", address: "", price: "", status: "Prospecting", notes: "" });
+  const [listingForm, setListingForm] = useState({ clientId: "", type: "Property Sale", address: "", price: "", status: "Prospecting", notes: "" });
 
   const [showFollowupForm, setShowFollowupForm] = useState(false);
   const [editingFollowupId, setEditingFollowupId] = useState(null);
@@ -401,7 +402,7 @@ function CRM({ userId }) {
       return;
     }
     if (!listingForm.address.trim()) {
-      setListingFormError("Please enter a property address.");
+      setListingFormError(listingForm.type === "Property Sale" ? "Please enter a property address." : "Please enter a description.");
       return;
     }
     setListingFormError("");
@@ -415,13 +416,14 @@ function CRM({ userId }) {
       const listing = { id: uid(), ...listingForm };
       updateData((d) => ({ ...d, listings: [...d.listings, listing] }));
     }
-    setListingForm({ clientId: selectedClientId || "", address: "", price: "", status: "Prospecting", notes: "" });
+    setListingForm({ clientId: selectedClientId || "", type: "Property Sale", address: "", price: "", status: "Prospecting", notes: "" });
     setShowListingForm(false);
   }
 
   function startEditListing(listing) {
     setListingForm({
       clientId: listing.clientId,
+      type: listing.type || "Property Sale",
       address: listing.address,
       price: listing.price,
       status: listing.status,
@@ -1170,7 +1172,7 @@ function ClientsView({
                 <div>
                   <div style={{ fontSize: 14 }}>{l.address}</div>
                   <div style={{ fontFamily: "'Courier New', monospace", fontSize: 12, color: "#8A8069" }}>
-                    {formatMoney(l.price)}
+                    {l.type || "Property Sale"} · {formatMoney(l.price)}
                   </div>
                   {l.notes && (
                     <div style={{ fontSize: 12, color: "#8A8069", fontStyle: "italic", marginTop: 2 }}>{l.notes}</div>
@@ -1375,7 +1377,7 @@ function PipelineView({
           onClick={() => {
             if (showListingForm) {
               setEditingListingId(null);
-              setListingForm({ clientId: "", address: "", price: "", status: "Prospecting", notes: "" });
+              setListingForm({ clientId: "", type: "Property Sale", address: "", price: "", status: "Prospecting", notes: "" });
               setListingFormError("");
             }
             setShowListingForm((s) => !s);
@@ -1408,14 +1410,24 @@ function PipelineView({
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
-          <label style={styles.label}>Property address</label>
+          <label style={styles.label}>Type</label>
+          <select
+            style={styles.input}
+            value={listingForm.type}
+            onChange={(e) => setListingForm({ ...listingForm, type: e.target.value })}
+          >
+            {PIPELINE_TYPES.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <label style={styles.label}>{listingForm.type === "Property Sale" ? "Property address" : "Description"}</label>
           <input
             style={styles.input}
             value={listingForm.address}
             onChange={(e) => setListingForm({ ...listingForm, address: e.target.value })}
-            placeholder="123 Wilson St, San Juan"
+            placeholder={listingForm.type === "Property Sale" ? "123 Wilson St, San Juan" : "e.g. Refinancing consult for 2BR condo"}
           />
-          <label style={styles.label}>Price</label>
+          <label style={styles.label}>{listingForm.type === "Property Sale" ? "Price" : "Deal value"}</label>
           <input
             style={styles.input}
             type="number"
@@ -1459,6 +1471,19 @@ function PipelineView({
                 <div>
                   <div style={{ fontSize: 14 }}>{l.address}</div>
                   <div style={{ fontSize: 12, color: "#8A8069" }}>
+                    <span
+                      style={{
+                        fontFamily: "'Courier New', monospace",
+                        fontSize: 10,
+                        padding: "1px 5px",
+                        marginRight: 6,
+                        background: (l.type || "Property Sale") === "Property Sale" ? "#DCE6D6" : "#EFE6D3",
+                        color: (l.type || "Property Sale") === "Property Sale" ? "#3F5A33" : "#6B5122",
+                        border: `1px solid ${(l.type || "Property Sale") === "Property Sale" ? "#7FA168" : "#C9A54B"}`,
+                      }}
+                    >
+                      {l.type || "Property Sale"}
+                    </span>
                     {clientName(l.clientId)} · {formatMoney(l.price)}
                   </div>
                   {l.notes && (
@@ -2734,6 +2759,19 @@ function ReportsView({ styles, data, clientName, brick }) {
 
   const pieData = clientTotalsList.map((c) => ({ name: c.name, value: c.total }));
 
+  const monthTotals = {};
+  data.services.forEach((s) => {
+    if (s.paymentStatus !== "Paid" || !s.dueDate) return;
+    const monthKey = s.dueDate.slice(0, 7); // YYYY-MM
+    monthTotals[monthKey] = (monthTotals[monthKey] || 0) + (Number(s.fee) || 0);
+  });
+  const monthTotalsList = Object.entries(monthTotals)
+    .map(([monthKey, total]) => {
+      const d = new Date(monthKey + "-01T00:00:00");
+      return { monthKey, label: d.toLocaleDateString(undefined, { month: "long", year: "numeric" }), total };
+    })
+    .sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+
   const statCard = (label, amount, color) => (
     <div style={{ ...styles.formCard, flex: 1, textAlign: "center" }}>
       <div style={{ fontFamily: "'Courier New', monospace", fontSize: 11, color: "#8A8069", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
@@ -2760,6 +2798,24 @@ function ReportsView({ styles, data, clientName, brick }) {
       <div style={{ fontSize: 11, color: "#8A8069", marginBottom: 22, fontStyle: "italic" }}>
         MTD = this month only. Year-to-Date includes every paid service this year, matching the Collections tab total.
       </div>
+
+      <div style={{ fontFamily: "'Courier New', monospace", fontSize: 12, color: "#8A8069", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        Month-by-Month Collections
+      </div>
+      {monthTotalsList.length === 0 ? (
+        <div style={{ ...styles.empty, marginBottom: 22 }}>No paid services with a due date yet.</div>
+      ) : (
+        <div style={{ marginBottom: 22 }}>
+          {monthTotalsList.map((m, i) => (
+            <div key={m.monthKey} style={{ ...styles.row, ...(i === monthTotalsList.length - 1 ? styles.rowLast : {}) }}>
+              <div style={{ fontSize: 14 }}>{m.label}</div>
+              <div style={{ fontFamily: "'Courier New', monospace", fontSize: 14, color: "#3F5A33" }}>
+                {formatMoney(m.total) || "₱0"}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ fontFamily: "'Courier New', monospace", fontSize: 12, color: "#8A8069", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>
         Client Profitability — All-Time Collected
