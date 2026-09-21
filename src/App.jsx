@@ -2427,6 +2427,32 @@ function CashflowView({
   const beginBal = Number(beginningBalance) || 0;
   const currentBalance = beginBal + actualIncome - actualExpense;
 
+  const [selectedMonth, setSelectedMonth] = useState(() => todayISO().slice(0, 7));
+
+  const monthOptions = [];
+  const anchor = new Date();
+  anchor.setDate(1);
+  for (let i = -3; i <= 11; i++) {
+    const d = new Date(anchor.getFullYear(), anchor.getMonth() + i, 1);
+    const key = d.toISOString().slice(0, 7);
+    monthOptions.push({ key, label: d.toLocaleDateString(undefined, { month: "short", year: "numeric" }) });
+  }
+
+  const monthEntries = scopedCashflow.filter((c) => c.date && c.date.slice(0, 7) === selectedMonth);
+  const dailyTotals = {};
+  monthEntries.forEach((c) => {
+    if (!dailyTotals[c.date]) dailyTotals[c.date] = { income: 0, expense: 0 };
+    const amt = Number(c.amount) || 0;
+    if (c.type === "Income") dailyTotals[c.date].income += amt;
+    else dailyTotals[c.date].expense += amt;
+  });
+  const dailyRows = Object.entries(dailyTotals)
+    .map(([date, t]) => ({ date, income: t.income, expense: t.expense, net: t.income - t.expense }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const monthTotalIncome = dailyRows.reduce((s, r) => s + r.income, 0);
+  const monthTotalExpense = dailyRows.reduce((s, r) => s + r.expense, 0);
+  const monthSelectedLabel = monthOptions.find((m) => m.key === selectedMonth)?.label || selectedMonth;
+
   return (
     <div>
       <div style={styles.sectionHead}>
@@ -2490,6 +2516,82 @@ function CashflowView({
             {formatMoney(forecastIncome - forecastExpense) || "₱0"}
           </div>
         </div>
+      </div>
+
+      <div style={{ fontFamily: "'Courier New', monospace", fontSize: 12, color: "#8A8069", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        Daily Cash Flow
+      </div>
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, marginBottom: 10 }}>
+        {monthOptions.map((m) => (
+          <button
+            key={m.key}
+            onClick={() => setSelectedMonth(m.key)}
+            style={{
+              flexShrink: 0,
+              padding: "6px 10px",
+              fontFamily: "'Courier New', monospace",
+              fontSize: 11,
+              whiteSpace: "nowrap",
+              border: `1px solid ${selectedMonth === m.key ? "#25313D" : "#D8D0BC"}`,
+              background: selectedMonth === m.key ? "#25313D" : "transparent",
+              color: selectedMonth === m.key ? "#F7F3EA" : "#6B6252",
+              cursor: "pointer",
+            }}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ ...styles.formCard, marginBottom: 22, padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", background: "#25313D", color: "#F7F3EA", fontFamily: "'Courier New', monospace", fontSize: 11, textTransform: "uppercase" }}>
+          <div style={{ flex: 1.2, padding: "8px 10px" }}>Date</div>
+          <div style={{ flex: 1, padding: "8px 10px", textAlign: "right" }}>Income</div>
+          <div style={{ flex: 1, padding: "8px 10px", textAlign: "right" }}>Expenses</div>
+          <div style={{ flex: 1, padding: "8px 10px", textAlign: "right" }}>Net</div>
+        </div>
+        {dailyRows.length === 0 ? (
+          <div style={{ padding: 14, fontSize: 13, color: "#8A8069" }}>
+            No cash flow entries for {monthSelectedLabel}.
+          </div>
+        ) : (
+          dailyRows.map((r, i) => (
+            <div
+              key={r.date}
+              style={{
+                display: "flex",
+                fontSize: 13,
+                borderTop: "1px solid #D8D0BC",
+                background: i % 2 === 0 ? "#FFFDF8" : "#FDFBF5",
+              }}
+            >
+              <div style={{ flex: 1.2, padding: "7px 10px" }}>{formatDate(r.date)}</div>
+              <div style={{ flex: 1, padding: "7px 10px", textAlign: "right", color: "#3F5A33", fontFamily: "'Courier New', monospace" }}>
+                {r.income > 0 ? formatMoney(r.income) : "—"}
+              </div>
+              <div style={{ flex: 1, padding: "7px 10px", textAlign: "right", color: "#B5502D", fontFamily: "'Courier New', monospace" }}>
+                {r.expense > 0 ? formatMoney(r.expense) : "—"}
+              </div>
+              <div style={{ flex: 1, padding: "7px 10px", textAlign: "right", fontWeight: 700, color: r.net >= 0 ? "#3F5A33" : "#B5502D", fontFamily: "'Courier New', monospace" }}>
+                {formatMoney(r.net) || "₱0"}
+              </div>
+            </div>
+          ))
+        )}
+        {dailyRows.length > 0 && (
+          <div style={{ display: "flex", borderTop: "2px solid #25313D", fontSize: 13, fontWeight: 700 }}>
+            <div style={{ flex: 1.2, padding: "8px 10px" }}>Total — {monthSelectedLabel}</div>
+            <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: "#3F5A33", fontFamily: "'Courier New', monospace" }}>
+              {formatMoney(monthTotalIncome) || "₱0"}
+            </div>
+            <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: "#B5502D", fontFamily: "'Courier New', monospace" }}>
+              {formatMoney(monthTotalExpense) || "₱0"}
+            </div>
+            <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: monthTotalIncome - monthTotalExpense >= 0 ? "#3F5A33" : "#B5502D", fontFamily: "'Courier New', monospace" }}>
+              {formatMoney(monthTotalIncome - monthTotalExpense) || "₱0"}
+            </div>
+          </div>
+        )}
       </div>
 
       {showCashflowForm && (
