@@ -68,7 +68,10 @@ const emptyData = {
   assets: [],
   liabilities: [],
   cashflow: [],
-  beginningBalances: { Business: "", Personal: "" },
+  beginningBalances: {
+    Business: { amount: "", date: "" },
+    Personal: { amount: "", date: "" },
+  },
 };
 
 const FINANCE_SCOPES = ["Business", "Personal"];
@@ -96,6 +99,13 @@ const CASHFLOW_STATUSES = ["Actual", "Forecasted"];
 function normalize(d) {
   const safe = d && typeof d === "object" ? d : {};
   const safeBB = safe.beginningBalances && typeof safe.beginningBalances === "object" ? safe.beginningBalances : {};
+  function normalizeBB(v) {
+    // Handles the old shape (a bare number/string) and the new shape ({amount, date})
+    if (v && typeof v === "object") {
+      return { amount: v.amount ?? "", date: v.date ?? "" };
+    }
+    return { amount: v ?? "", date: "" };
+  }
   return {
     clients: Array.isArray(safe.clients) ? safe.clients : [],
     listings: Array.isArray(safe.listings) ? safe.listings : [],
@@ -105,7 +115,10 @@ function normalize(d) {
     assets: Array.isArray(safe.assets) ? safe.assets : [],
     liabilities: Array.isArray(safe.liabilities) ? safe.liabilities : [],
     cashflow: Array.isArray(safe.cashflow) ? safe.cashflow : [],
-    beginningBalances: { Business: safeBB.Business ?? "", Personal: safeBB.Personal ?? "" },
+    beginningBalances: {
+      Business: normalizeBB(safeBB.Business),
+      Personal: normalizeBB(safeBB.Personal),
+    },
   };
 }
 
@@ -286,8 +299,14 @@ function CRM({ userId }) {
     updateData((d) => ({ ...d, cashflow: d.cashflow.filter((c) => c.id !== id) }));
   }
 
-  function setBeginningBalance(scope, value) {
-    updateData((d) => ({ ...d, beginningBalances: { ...d.beginningBalances, [scope]: value } }));
+  function setBeginningBalanceField(scope, field, value) {
+    updateData((d) => ({
+      ...d,
+      beginningBalances: {
+        ...d.beginningBalances,
+        [scope]: { ...d.beginningBalances[scope], [field]: value },
+      },
+    }));
   }
 
   const [askQuestion, setAskQuestion] = useState("");
@@ -1100,7 +1119,7 @@ function CRM({ userId }) {
             data={data}
             financeScope={effectiveFinanceScope}
             beginningBalance={data.beginningBalances[effectiveFinanceScope]}
-            setBeginningBalance={setBeginningBalance}
+            setBeginningBalanceField={setBeginningBalanceField}
             showCashflowForm={showCashflowForm}
             setShowCashflowForm={setShowCashflowForm}
             cashflowForm={cashflowForm}
@@ -2411,7 +2430,7 @@ function LiabilitiesView({
 }
 
 function CashflowView({
-  styles, data, financeScope, beginningBalance, setBeginningBalance,
+  styles, data, financeScope, beginningBalance, setBeginningBalanceField,
   showCashflowForm, setShowCashflowForm, cashflowForm, setCashflowForm,
   cashflowFormError, setCashflowFormError, addCashflow, editingCashflowId, setEditingCashflowId,
   startEditCashflow, deleteCashflow, brick,
@@ -2424,8 +2443,42 @@ function CashflowView({
   const actualExpense = actual.filter((c) => c.type === "Expense").reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const forecastIncome = forecasted.filter((c) => c.type === "Income").reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const forecastExpense = forecasted.filter((c) => c.type === "Expense").reduce((s, c) => s + (Number(c.amount) || 0), 0);
-  const beginBal = Number(beginningBalance) || 0;
-  const currentBalance = beginBal + actualIncome - actualExpense;
+
+  const beginBal = Number(beginningBalance.amount) || 0;
+  const beginDate = beginningBalance.date || "";
+
+  // Build a continuous running balance across ALL entries (Actual + Forecasted) from the
+  // beginning balance date forward, so the ending balance of one day/month carries into the next.
+  const relevantEntries = scopedCashflow
+    .filter((c) => c.date && (!beginDate || c.date >= beginDate))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const entryDateTotals = {};
+  relevantEntries.forEach((c) => {
+    if (!entryDateTotals[c.date]) entryDateTotals[c.date] = { income: 0, expense: 0 };
+    const amt = Number(c.amount) || 0;
+    if (c.type === "Income") entryDateTotals[c.date].income += amt;
+    else entryDateTotals[c.date].expense += amt;
+  });
+  const sortedEntryDates = Object.keys(entryDateTotals).sort();
+  const runningByDate = {};
+  let running = beginBal;
+  sortedEntryDates.forEach((d) => {
+    running += entryDateTotals[d].income - entryDateTotals[d].expense;
+    runningByDate[d] = running;
+  });
+
+  function balanceAsOf(dateStr) {
+    let result = beginBal;
+    for (const d of sortedEntryDates) {
+      if (d > dateStr) break;
+      result = runningByDate[d];
+    }
+    return result;
+  }
+
+  const today = todayISO();
+  const currentBalance = balanceAsOf(today);
 
   const [selectedMonth, setSelectedMonth] = useState(() => todayISO().slice(0, 7));
 
@@ -2438,17 +2491,15 @@ function CashflowView({
     monthOptions.push({ key, label: d.toLocaleDateString(undefined, { month: "short", year: "numeric" }) });
   }
 
-  const monthEntries = scopedCashflow.filter((c) => c.date && c.date.slice(0, 7) === selectedMonth);
-  const dailyTotals = {};
-  monthEntries.forEach((c) => {
-    if (!dailyTotals[c.date]) dailyTotals[c.date] = { income: 0, expense: 0 };
-    const amt = Number(c.amount) || 0;
-    if (c.type === "Income") dailyTotals[c.date].income += amt;
-    else dailyTotals[c.date].expense += amt;
-  });
-  const dailyRows = Object.entries(dailyTotals)
-    .map(([date, t]) => ({ date, income: t.income, expense: t.expense, net: t.income - t.expense }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+  // Show every day of the selected month, with balance carried forward on quiet days.
+  const [selYear, selMonthNum] = selectedMonth.split("-").map(Number);
+  const daysInMonth = new Date(selYear, selMonthNum, 0).getDate();
+  const dailyRows = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${selYear}-${String(selMonthNum).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const t = entryDateTotals[dateStr] || { income: 0, expense: 0 };
+    dailyRows.push({ date: dateStr, income: t.income, expense: t.expense, balance: balanceAsOf(dateStr) });
+  }
   const monthTotalIncome = dailyRows.reduce((s, r) => s + r.income, 0);
   const monthTotalExpense = dailyRows.reduce((s, r) => s + r.expense, 0);
   const monthSelectedLabel = monthOptions.find((m) => m.key === selectedMonth)?.label || selectedMonth;
@@ -2485,13 +2536,20 @@ function CashflowView({
         <input
           style={styles.input}
           type="number"
-          value={beginningBalance}
-          onChange={(e) => setBeginningBalance(financeScope, e.target.value)}
-          placeholder="Set once — the balance you're starting from"
+          value={beginningBalance.amount}
+          onChange={(e) => setBeginningBalanceField(financeScope, "amount", e.target.value)}
+          placeholder="The balance you're starting from"
+        />
+        <label style={styles.label}>As of Date</label>
+        <input
+          style={styles.input}
+          type="date"
+          value={beginningBalance.date}
+          onChange={(e) => setBeginningBalanceField(financeScope, "date", e.target.value)}
         />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
           <div style={{ fontFamily: "'Courier New', monospace", fontSize: 11, color: "#8A8069", textTransform: "uppercase" }}>
-            Current Balance (Beginning + Actual Cash Flow)
+            Current Balance (as of today)
           </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: currentBalance >= 0 ? "#3F5A33" : "#B5502D" }}>
             {formatMoney(currentBalance) || "₱0"}
@@ -2548,50 +2606,52 @@ function CashflowView({
           <div style={{ flex: 1.2, padding: "8px 10px" }}>Date</div>
           <div style={{ flex: 1, padding: "8px 10px", textAlign: "right" }}>Income</div>
           <div style={{ flex: 1, padding: "8px 10px", textAlign: "right" }}>Expenses</div>
-          <div style={{ flex: 1, padding: "8px 10px", textAlign: "right" }}>Net</div>
+          <div style={{ flex: 1.2, padding: "8px 10px", textAlign: "right" }}>Running Balance</div>
         </div>
-        {dailyRows.length === 0 ? (
-          <div style={{ padding: 14, fontSize: 13, color: "#8A8069" }}>
-            No cash flow entries for {monthSelectedLabel}.
+        {!beginDate && (
+          <div style={{ padding: "8px 10px", fontSize: 11, color: "#8A8069", fontStyle: "italic", borderTop: "1px solid #D8D0BC" }}>
+            No beginning balance date set — balance below is based on all recorded entries. Set a date above for a precise starting point.
           </div>
-        ) : (
-          dailyRows.map((r, i) => (
+        )}
+        {dailyRows.map((r, i) => {
+          const isToday = r.date === today;
+          return (
             <div
               key={r.date}
               style={{
                 display: "flex",
                 fontSize: 13,
                 borderTop: "1px solid #D8D0BC",
-                background: i % 2 === 0 ? "#FFFDF8" : "#FDFBF5",
+                background: isToday ? "#FFF6DC" : i % 2 === 0 ? "#FFFDF8" : "#FDFBF5",
               }}
             >
-              <div style={{ flex: 1.2, padding: "7px 10px" }}>{formatDate(r.date)}</div>
+              <div style={{ flex: 1.2, padding: "7px 10px", fontWeight: isToday ? 700 : 400 }}>
+                {formatDate(r.date)}{isToday ? " · today" : ""}
+              </div>
               <div style={{ flex: 1, padding: "7px 10px", textAlign: "right", color: "#3F5A33", fontFamily: "'Courier New', monospace" }}>
                 {r.income > 0 ? formatMoney(r.income) : "—"}
               </div>
               <div style={{ flex: 1, padding: "7px 10px", textAlign: "right", color: "#B5502D", fontFamily: "'Courier New', monospace" }}>
                 {r.expense > 0 ? formatMoney(r.expense) : "—"}
               </div>
-              <div style={{ flex: 1, padding: "7px 10px", textAlign: "right", fontWeight: 700, color: r.net >= 0 ? "#3F5A33" : "#B5502D", fontFamily: "'Courier New', monospace" }}>
-                {formatMoney(r.net) || "₱0"}
+              <div style={{ flex: 1.2, padding: "7px 10px", textAlign: "right", fontWeight: 700, color: r.balance >= 0 ? "#3F5A33" : "#B5502D", fontFamily: "'Courier New', monospace" }}>
+                {formatMoney(r.balance) || "₱0"}
               </div>
             </div>
-          ))
-        )}
-        {dailyRows.length > 0 && (
-          <div style={{ display: "flex", borderTop: "2px solid #25313D", fontSize: 13, fontWeight: 700 }}>
-            <div style={{ flex: 1.2, padding: "8px 10px" }}>Total — {monthSelectedLabel}</div>
-            <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: "#3F5A33", fontFamily: "'Courier New', monospace" }}>
-              {formatMoney(monthTotalIncome) || "₱0"}
-            </div>
-            <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: "#B5502D", fontFamily: "'Courier New', monospace" }}>
-              {formatMoney(monthTotalExpense) || "₱0"}
-            </div>
-            <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: monthTotalIncome - monthTotalExpense >= 0 ? "#3F5A33" : "#B5502D", fontFamily: "'Courier New', monospace" }}>
-              {formatMoney(monthTotalIncome - monthTotalExpense) || "₱0"}
-            </div>
+          );
+        })}
+        <div style={{ display: "flex", borderTop: "2px solid #25313D", fontSize: 13, fontWeight: 700 }}>
+          <div style={{ flex: 1.2, padding: "8px 10px" }}>Ending Balance — {monthSelectedLabel}</div>
+          <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: "#3F5A33", fontFamily: "'Courier New', monospace" }}>
+            {formatMoney(monthTotalIncome) || "₱0"}
           </div>
-        )}
+          <div style={{ flex: 1, padding: "8px 10px", textAlign: "right", color: "#B5502D", fontFamily: "'Courier New', monospace" }}>
+            {formatMoney(monthTotalExpense) || "₱0"}
+          </div>
+          <div style={{ flex: 1.2, padding: "8px 10px", textAlign: "right", color: dailyRows[dailyRows.length - 1].balance >= 0 ? "#3F5A33" : "#B5502D", fontFamily: "'Courier New', monospace" }}>
+            {formatMoney(dailyRows[dailyRows.length - 1].balance) || "₱0"}
+          </div>
+        </div>
       </div>
 
       {showCashflowForm && (
@@ -2700,7 +2760,8 @@ function StatementsView({ styles, data, financeScope, brick }) {
   const scopedAssets = data.assets.filter((a) => (a.scope || "Personal") === financeScope);
   const scopedLiabilities = data.liabilities.filter((l) => (l.scope || "Personal") === financeScope);
   const scopedCashflow = data.cashflow.filter((c) => (c.scope || "Personal") === financeScope);
-  const beginBal = Number(data.beginningBalances[financeScope]) || 0;
+  const beginBal = Number(data.beginningBalances[financeScope].amount) || 0;
+  const beginDate = data.beginningBalances[financeScope].date || "";
 
   const totalAssets = scopedAssets.reduce((s, a) => s + (Number(a.value) || 0), 0);
   const totalLiabilities = scopedLiabilities.reduce((s, l) => s + (Number(l.balance) || 0), 0);
@@ -2720,7 +2781,10 @@ function StatementsView({ styles, data, financeScope, brick }) {
   const totalIncome = actual.filter((c) => c.type === "Income").reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const totalExpense = actual.filter((c) => c.type === "Expense").reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const netIncome = totalIncome - totalExpense;
-  const currentCashBalance = beginBal + totalIncome - totalExpense;
+  const actualForBalance = beginDate ? actual.filter((c) => c.date >= beginDate) : actual;
+  const balanceIncome = actualForBalance.filter((c) => c.type === "Income").reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const balanceExpense = actualForBalance.filter((c) => c.type === "Expense").reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const currentCashBalance = beginBal + balanceIncome - balanceExpense;
 
   const incomeByCategory = INCOME_CATEGORIES.map((cat) => ({
     category: cat,
