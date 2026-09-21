@@ -2469,6 +2469,7 @@ function CashflowView({
   });
 
   function balanceAsOf(dateStr) {
+    if (beginDate && dateStr < beginDate) return 0;
     let result = beginBal;
     for (const d of sortedEntryDates) {
       if (d > dateStr) break;
@@ -2487,7 +2488,7 @@ function CashflowView({
   anchor.setDate(1);
   for (let i = -3; i <= 11; i++) {
     const d = new Date(anchor.getFullYear(), anchor.getMonth() + i, 1);
-    const key = d.toISOString().slice(0, 7);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     monthOptions.push({ key, label: d.toLocaleDateString(undefined, { month: "short", year: "numeric" }) });
   }
 
